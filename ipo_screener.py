@@ -12,11 +12,14 @@ SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = 587
 OFFER_AMOUNT_THRESHOLD = 200_000_000
 
-# --- Finnhub API ---
-def get_ipos(api_key):
+
+def get_ipos(api_key, todays_date):
     """Fetches upcoming IPOs from Finnhub."""
-    today = date.today()
-    # Finnhub API takes a start and end date. We are only interested in today's IPOs.
+    if not api_key:
+        print("FINNHUB_API_KEY not set")
+        return None
+    
+    today = todays_date
     start_date = today.strftime("%Y-%m-%d")
     end_date = (today + timedelta(days=1)).strftime("%Y-%m-%d")
     
@@ -24,66 +27,90 @@ def get_ipos(api_key):
     try:
         response = requests.get(url)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        print(f"Fetched {len(data.get('ipoCalendar', []))} IPOs")
+        return data
     except requests.exceptions.RequestException as e:
         print(f"Error fetching IPO data: {e}")
         return None
 
-# --- Email ---
 def send_email(subject, body):
-    """Sends an email with the specified subject and body."""
+    """Send properly formatted MIME email (fixes Unicode error)."""
     if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
-        print("Email credentials not fully configured. Skipping email.")
-        return
+        print("Email credentials incomplete. Skipping email.")
+        return False
 
-    message = f"Subject: {subject}\n\n{body}"
+    # Create MIME message
+    msg = MIMEMultipart()
+    msg['From'] = EMAIL_SENDER
+    msg['To'] = EMAIL_RECIPIENT
+    msg['Subject'] = subject
+    
+    # Body as UTF-8 text
+    msg.attach(MIMEText(body, 'plain', 'utf-8'))
+    
     try:
         with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
             server.starttls()
             server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, message)
-        print("Email sent successfully.")
-    except smtplib.SMTPException as e:
-        print(f"Error sending email: {e}")
+            server.send_message(msg)  # Use send_message() for MIME
+        print("✅ Email sent successfully.")
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        print(f"❌ Auth failed: {e}")
+        print("💡 Use Gmail App Password: myaccount.google.com/apppasswords")
+        return False
+    except Exception as e:
+        print(f"❌ Email error: {e}")
+        return False
 
-# --- Main Logic ---
+
 def main():
     """Main function to run the IPO screener."""
     if not FINNHUB_API_KEY:
-        print("FINNHUB_API_KEY environment variable not set.")
+        print("Set FINNHUB_API_KEY environment variable")
         return
 
-    ipo_data = get_ipos(FINNHUB_API_KEY)
 
+    
+    todays_date = date.today() - timedelta(days=2)
+
+
+    ipo_data = get_ipos(FINNHUB_API_KEY, todays_date)
     if not ipo_data or not ipo_data.get("ipoCalendar"):
         print("No IPOs found for today.")
         return
 
     filtered_ipos = []
     for ipo in ipo_data["ipoCalendar"]:
-        price_range = ipo.get("price", "0-0").split("-")
+        price_str = ipo.get("price")
+        if price_str is None:
+            continue
+        price_range = price_str.split("-")
         try:
-            # Use the higher end of the price range for calculation
             price = float(price_range[-1])
-            shares = ipo.get("numberOfShares", 0)
+            shares = ipo.get("numberOfShares", 0) or 0
             offer_amount = price * shares
-
             if offer_amount > OFFER_AMOUNT_THRESHOLD:
                 filtered_ipos.append(ipo)
-        except (ValueError, IndexError):
-            # Ignore IPOs with malformed price data
+        except (ValueError, IndexError, TypeError):
             continue
-            
+
     if filtered_ipos:
-        subject = "High-Value IPOs for Today"
-        body = "The following IPOs have an offer amount greater than $200 million:\n\n"
+        subject = f"High-Value IPOs >${OFFER_AMOUNT_THRESHOLD/1_000_000:.0f}M ({len(filtered_ipos)} found for date {todays_date} )"
+        body = f"Offer amount = IPO price × shares\n\n"
         for ipo in filtered_ipos:
-            body += f"- {ipo['symbol']}\n"
+            symbol = ipo.get('symbol', 'N/A')
+            name = ipo.get('name', 'Unknown')
+            shares = ipo.get('numberOfShares', 0)
+            price = ipo.get('price', 'N/A')
+            body += f"- {symbol}: {name} ({shares:,} shares @ {price})\n"
         
+        print(f"Found {len(filtered_ipos)} qualifying IPOs")
         print(body)
         send_email(subject, body)
     else:
-        print("No IPOs found today that meet the criteria.")
+        print("No IPOs meet criteria (> $200M offer)")
 
 if __name__ == "__main__":
     main()
