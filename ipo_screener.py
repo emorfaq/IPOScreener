@@ -1,7 +1,9 @@
 import os
 import requests
-import smtplib
 from datetime import date, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import smtplib
 
 # --- Configuration ---
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY")
