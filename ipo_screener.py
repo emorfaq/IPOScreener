@@ -75,7 +75,7 @@ def main():
 
 
     
-    todays_date = date.today() - timedelta(days=2)
+    todays_date = date.today()
 
 
     ipo_data = get_ipos(FINNHUB_API_KEY, todays_date)
