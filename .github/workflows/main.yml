@@ -7,7 +7,7 @@ on:
 
 jobs:
   run-screener:
-    runs-on: [self-hosted, Windows]
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
